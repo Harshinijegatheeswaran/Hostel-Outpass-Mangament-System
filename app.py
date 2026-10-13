@@ -1,234 +1,298 @@
-"""
-Smart Hostel Outpass & Home Leave System - interactive version
-Takes all data from the user via input(). Works on OnlineGDB, Programiz,
-Replit, Colab (Python 3). Data lives in memory for the session.
 
-Built-in staff logins: warden -> w1 / 1234 ; guard -> g1 / 1234
-Students register themselves from the main menu.
-"""
+import os
 import sqlite3
-import random
+import secrets
 import string
-from datetime import datetime, timedelta
+from datetime import datetime
+from functools import wraps
 
-FMT = "%Y-%m-%d %H:%M"
-conn = sqlite3.connect(":memory:")
-conn.row_factory = sqlite3.Row
-conn.executescript("""
-CREATE TABLE users(id TEXT PRIMARY KEY, name TEXT, role TEXT, room TEXT, pw TEXT);
-CREATE TABLE requests(
-    id INTEGER PRIMARY KEY AUTOINCREMENT, student_id TEXT, type TEXT, dest TEXT,
-    reason TEXT, from_dt TEXT, to_dt TEXT, status TEXT DEFAULT 'Pending',
-    code TEXT, remark TEXT, out_at TEXT, in_at TEXT);
-""")
-conn.executemany("INSERT INTO users VALUES(?,?,?,?,?)", [
-    ("w1", "Warden", "warden", None, "1234"),
-    ("g1", "Gate Guard", "guard", None, "1234")])
+from flask import (
+    Flask, render_template, request, redirect,
+    url_for, session, flash, abort
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "change-this-before-deployment")
+
+DB_PATH = os.environ.get("DB_PATH", "hostel.db")
+FMT = "%Y-%m-%dT%H:%M"
 
 
-# ---------- input helpers ----------
-def ask(prompt, required=True):
+def connect():
+    db = sqlite3.connect(DB_PATH, timeout=20)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+def init_db():
+    with connect() as db:
+        db.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            room TEXT,
+            pw TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            dest TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            from_dt TEXT NOT NULL,
+            to_dt TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            code TEXT UNIQUE,
+            remark TEXT DEFAULT '',
+            out_at TEXT,
+            in_at TEXT
+        );
+        """)
+
+        for uid, name, role in [
+            ("w1", "Warden", "warden"),
+            ("g1", "Gate Guard", "guard")
+        ]:
+            exists = db.execute(
+                "SELECT id FROM users WHERE id=?", (uid,)
+            ).fetchone()
+
+            if not exists:
+                db.execute(
+                    "INSERT INTO users VALUES (?, ?, ?, ?, ?)",
+                    (uid, name, role, "-", generate_password_hash("1234"))
+                )
+
+
+init_db()
+
+
+def current_user():
+    uid = session.get("uid")
+    if not uid:
+        return None
+    with connect() as db:
+        return db.execute(
+            "SELECT id, name, role, room FROM users WHERE id=?", (uid,)
+        ).fetchone()
+
+
+def login_required(*roles):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            user = current_user()
+            if not user:
+                return redirect(url_for("index"))
+            if roles and user["role"] not in roles:
+                abort(403)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def new_code(db):
+    alphabet = string.ascii_uppercase + string.digits
     while True:
-        v = input(prompt).strip()
-        if v or not required:
-            return v
-        print("  This field is required.")
+        code = "".join(secrets.choice(alphabet) for _ in range(6))
+        if not db.execute(
+            "SELECT id FROM requests WHERE code=?", (code,)
+        ).fetchone():
+            return code
 
 
-def ask_int(prompt, lo, hi):
-    while True:
-        v = input(prompt).strip()
-        if v.isdigit() and lo <= int(v) <= hi:
-            return int(v)
-        print(f"  Enter a number between {lo} and {hi}.")
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if current_user():
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        action = request.form.get("action")
+
+        with connect() as db:
+            if action == "register":
+                uid = request.form.get("user_id", "").strip()
+                name = request.form.get("name", "").strip()
+                room = request.form.get("room", "").strip()
+                password = request.form.get("password", "")
+
+                if not all([uid, name, room, password]):
+                    flash("Please complete all registration fields.")
+                elif len(password) < 8:
+                    flash("Use a password with at least 8 characters.")
+                elif db.execute(
+                    "SELECT id FROM users WHERE id=?", (uid,)
+                ).fetchone():
+                    flash("That student ID is already registered.")
+                else:
+                    db.execute(
+                        "INSERT INTO users VALUES (?, ?, 'student', ?, ?)",
+                        (uid, name, room, generate_password_hash(password))
+                    )
+                    flash("Registration successful. Please log in.")
+
+            elif action == "login":
+                uid = request.form.get("user_id", "").strip()
+                password = request.form.get("password", "")
+                user = db.execute(
+                    "SELECT * FROM users WHERE id=?", (uid,)
+                ).fetchone()
+
+                if user and check_password_hash(user["pw"], password):
+                    session.clear()
+                    session["uid"] = user["id"]
+                    return redirect(url_for("dashboard"))
+
+                flash("Invalid user ID or password.")
+
+    return render_template("index.html")
 
 
-def ask_dt(prompt, allow_now=False):
-    hint = " or press Enter for NOW" if allow_now else ""
-    while True:
-        v = input(f"{prompt} (YYYY-MM-DD HH:MM{hint}): ").strip()
-        if not v and allow_now:
-            return datetime.now().replace(second=0, microsecond=0)
-        try:
-            return datetime.strptime(v, FMT)
-        except ValueError:
-            print("  Invalid format. Example: 2026-10-20 18:30")
+@app.route("/dashboard")
+@login_required()
+def dashboard():
+    user = current_user()
 
-
-def fmt(d):
-    return d.strftime(FMT)
-
-
-def parse(s):
-    return datetime.strptime(s, FMT)
-
-
-def name_of(uid):
-    return conn.execute("SELECT name FROM users WHERE id=?", (uid,)).fetchone()[0]
-
-
-# ---------- display ----------
-def show(where="1=1", params=()):
-    rows = conn.execute(f"SELECT * FROM requests WHERE {where} ORDER BY id DESC", params).fetchall()
-    if not rows:
-        print("  (none)")
-    for r in rows:
-        flag = ""
-        if r["status"] == "Out" and datetime.now() > parse(r["to_dt"]):
-            flag = "  ** OVERDUE **"
-        elif r["in_at"] and parse(r["in_at"]) > parse(r["to_dt"]):
-            flag = "  ** LATE RETURN **"
-        print(f"\n  #{r['id']} {r['type']} | {name_of(r['student_id'])} | {r['dest']}")
-        print(f"     {r['from_dt']} -> {r['to_dt']} | Status: {r['status']}{flag}")
-        print(f"     Reason: {r['reason']}")
-        if r["remark"]:
-            print(f"     Warden remark: {r['remark']}")
-        if r["out_at"]:
-            print(f"     Out: {r['out_at']}   In: {r['in_at'] or '-'}")
-
-
-# ---------- registration ----------
-def register():
-    print("\n--- Student Registration ---")
-    while True:
-        uid = ask("Choose a User ID: ")
-        if conn.execute("SELECT 1 FROM users WHERE id=?", (uid,)).fetchone():
-            print("  ID already taken.")
+    with connect() as db:
+        if user["role"] == "student":
+            rows = db.execute(
+                "SELECT * FROM requests WHERE student_id=? ORDER BY id DESC",
+                (user["id"],)
+            ).fetchall()
         else:
-            break
-    conn.execute("INSERT INTO users VALUES(?,?,?,?,?)",
-                 (uid, ask("Full name: "), "student", ask("Room no.: "), ask("Password: ")))
-    conn.commit()
-    print("Registered! You can now log in.")
+            rows = db.execute("""
+                SELECT requests.*, users.name, users.room
+                FROM requests JOIN users ON users.id=requests.student_id
+                ORDER BY requests.id DESC
+            """).fetchall()
+
+    now = datetime.now()
+    requests_data = []
+
+    for row in rows:
+        item = dict(row)
+        item["overdue"] = (
+            item["status"] == "Out"
+            and now > datetime.strptime(item["to_dt"], FMT)
+        )
+        requests_data.append(item)
+
+    return render_template(
+        "dashboard.html", user=user, requests=requests_data, now=now
+    )
 
 
-def login():
-    uid, pw = ask("User ID: "), ask("Password: ")
-    u = conn.execute("SELECT * FROM users WHERE id=? AND pw=?", (uid, pw)).fetchone()
-    if not u:
-        print("Invalid ID or password.")
-    return u
+@app.route("/apply", methods=["POST"])
+@login_required("student")
+def apply():
+    kind = request.form.get("type", "")
+    dest = request.form.get("dest", "").strip()
+    reason = request.form.get("reason", "").strip()
+    start = request.form.get("from_dt", "")
+    end = request.form.get("to_dt", "")
 
+    try:
+        start_dt = datetime.strptime(start, FMT)
+        end_dt = datetime.strptime(end, FMT)
+    except ValueError:
+        flash("Please enter valid leaving and return times.")
+        return redirect(url_for("dashboard"))
 
-# ---------- student ----------
-def apply_request(u):
-    print("\n--- New Request ---")
-    kind = "Outpass" if ask_int("1) Outpass  2) Home Leave : ", 1, 2) == 1 else "Home Leave"
-    dest = ask("Destination: ")
-    reason = ask("Reason: ")
-    start = ask_dt("Leaving at", allow_now=True)
-    if kind == "Outpass":
-        end = start + timedelta(hours=ask_int("Hours you will be out (1-12): ", 1, 12))
+    if kind not in ("Outpass", "Home Leave") or not dest or not reason:
+        flash("Please complete all request fields.")
+    elif end_dt <= start_dt:
+        flash("Return time must be after leaving time.")
+    elif kind == "Outpass" and (end_dt - start_dt).total_seconds() > 12 * 3600:
+        flash("An outpass cannot exceed 12 hours.")
+    elif start_dt < datetime.now().replace(second=0, microsecond=0):
+        flash("Leaving time cannot be in the past.")
     else:
-        while True:
-            end = ask_dt("Returning by")
-            if end > start:
-                break
-            print("  Return time must be after leaving time.")
-    code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    cur = conn.execute("""INSERT INTO requests(student_id,type,dest,reason,from_dt,to_dt,code)
-                          VALUES(?,?,?,?,?,?,?)""", (u["id"], kind, dest, reason, fmt(start), fmt(end), code))
-    conn.commit()
-    print(f"Request #{cur.lastrowid} submitted ({fmt(start)} -> {fmt(end)}). Waiting for warden.")
+        with connect() as db:
+            code = new_code(db)
+            db.execute("""
+                INSERT INTO requests
+                (student_id, type, dest, reason, from_dt, to_dt, code)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session["uid"], kind, dest, reason,
+                start, end, code
+            ))
+        flash("Request submitted for warden approval.")
+
+    return redirect(url_for("dashboard"))
 
 
-def student_menu(u):
-    while True:
-        print(f"\n[Student: {u['name']} | Room {u['room']}]")
-        c = ask_int("1) Apply  2) My requests  3) My gate codes  0) Logout : ", 0, 3)
-        if c == 1:
-            apply_request(u)
-        elif c == 2:
-            show("student_id=?", (u["id"],))
-        elif c == 3:
-            rows = conn.execute("SELECT * FROM requests WHERE student_id=? AND status IN('Approved','Out')",
-                                (u["id"],)).fetchall()
-            for r in rows:
-                print(f"  #{r['id']} {r['dest']}  ->  CODE: {r['code']}  ({r['status']})")
-            if not rows:
-                print("  No approved passes yet.")
+@app.route("/decision/<int:rid>", methods=["POST"])
+@login_required("warden")
+def decision(rid):
+    action = request.form.get("action")
+    remark = request.form.get("remark", "").strip()
+
+    if action not in ("Approved", "Rejected"):
+        abort(400)
+
+    with connect() as db:
+        cur = db.execute("""
+            UPDATE requests SET status=?, remark=?
+            WHERE id=? AND status='Pending'
+        """, (action, remark, rid))
+
+        if cur.rowcount:
+            flash(f"Request {action.lower()} successfully.")
         else:
-            return
+            flash("Request not found or already processed.")
+
+    return redirect(url_for("dashboard"))
 
 
-# ---------- warden ----------
-def warden_menu(u):
-    while True:
-        print(f"\n[Warden: {u['name']}]")
-        c = ask_int("1) Pending  2) All requests  3) Currently out  4) Stats  0) Logout : ", 0, 4)
-        if c == 1:
-            show("status='Pending'")
-            ids = [r["id"] for r in conn.execute("SELECT id FROM requests WHERE status='Pending'")]
-            if ids:
-                rid = ask("\nRequest ID to act on (Enter to skip): ", required=False)
-                if rid.isdigit() and int(rid) in ids:
-                    approve = ask_int("1) Approve  2) Reject : ", 1, 2) == 1
-                    remark = ask("Remark (optional): ", required=False)
-                    conn.execute("UPDATE requests SET status=?, remark=? WHERE id=?",
-                                 ("Approved" if approve else "Rejected", remark, int(rid)))
-                    conn.commit()
-                    print(f"Request #{rid} {'approved' if approve else 'rejected'}.")
-        elif c == 2:
-            show()
-        elif c == 3:
-            show("status='Out'")
-        elif c == 4:
-            for s in ("Pending", "Approved", "Out", "Returned", "Rejected"):
-                n = conn.execute("SELECT COUNT(*) FROM requests WHERE status=?", (s,)).fetchone()[0]
-                print(f"  {s:<9}: {n}")
-        else:
-            return
+@app.route("/gate", methods=["POST"])
+@login_required("guard")
+def gate():
+    code = request.form.get("code", "").strip().upper()
+    now = datetime.now()
 
+    with connect() as db:
+        row = db.execute(
+            "SELECT * FROM requests WHERE code=?", (code,)
+        ).fetchone()
 
-# ---------- guard ----------
-def guard_menu(u):
-    while True:
-        print(f"\n[Guard: {u['name']}]")
-        c = ask_int("1) Scan pass code  2) Students outside  0) Logout : ", 0, 2)
-        if c == 1:
-            code = ask("Enter pass code: ").upper()
-            r = conn.execute("SELECT * FROM requests WHERE code=? AND status IN('Approved','Out')",
-                             (code,)).fetchone()
-            if not r:
-                print("Invalid or unapproved code.")
-                continue
-            t, who = datetime.now(), name_of(r["student_id"])
-            if r["status"] == "Approved":
-                if not (parse(r["from_dt"]) <= t <= parse(r["to_dt"])):
-                    print(f"Outside permitted window ({r['from_dt']} -> {r['to_dt']}). Exit denied.")
-                    continue
-                conn.execute("UPDATE requests SET status='Out', out_at=? WHERE id=?", (fmt(t), r["id"]))
-                print(f"{who} checked OUT -> {r['dest']}")
+        if not row:
+            flash("Invalid gate code.")
+        elif row["status"] == "Approved":
+            start = datetime.strptime(row["from_dt"], FMT)
+            end = datetime.strptime(row["to_dt"], FMT)
+
+            if not start <= now <= end:
+                flash("Exit denied: outside the approved time window.")
             else:
-                conn.execute("UPDATE requests SET status='Returned', in_at=? WHERE id=?", (fmt(t), r["id"]))
-                print(f"{who} checked IN" + (" (LATE RETURN)" if t > parse(r["to_dt"]) else ""))
-            conn.commit()
-        elif c == 2:
-            show("status='Out'")
+                db.execute("""
+                    UPDATE requests SET status='Out', out_at=?
+                    WHERE id=? AND status='Approved'
+                """, (now.strftime(FMT), row["id"]))
+                flash("Student checked out.")
+        elif row["status"] == "Out":
+            db.execute("""
+                UPDATE requests SET status='Returned', in_at=?
+                WHERE id=? AND status='Out'
+            """, (now.strftime(FMT), row["id"]))
+            if now > datetime.strptime(row["to_dt"], FMT):
+                flash("Student checked in. LATE RETURN.")
+            else:
+                flash("Student checked in successfully.")
         else:
-            return
+            flash("This pass is not approved or is already closed.")
+
+    return redirect(url_for("dashboard"))
 
 
-# ---------- main ----------
-def main():
-    menus = {"student": student_menu, "warden": warden_menu, "guard": guard_menu}
-    print("=== Smart Hostel Outpass & Home Leave System ===")
-    print("Staff logins: warden w1/1234, guard g1/1234. Students: register first.")
-    while True:
-        c = ask_int("\n1) Register (student)  2) Login  0) Exit : ", 0, 2)
-        if c == 1:
-            register()
-        elif c == 2:
-            u = login()
-            if u:
-                menus[u["role"]](u)
-        else:
-            print("Goodbye!")
-            break
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("index"))
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except (EOFError, KeyboardInterrupt):
-        print("\nExited.")
+    app.run(debug=True)
