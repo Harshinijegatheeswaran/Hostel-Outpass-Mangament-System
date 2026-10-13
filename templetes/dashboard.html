@@ -1,0 +1,146 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hostel Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+    <h1>Smart Hostel Dashboard</h1>
+    <p>{{ user.name }} | {{ user.role|title }}</p>
+    <form action="{{ url_for('logout') }}" method="POST">
+        <button class="secondary" type="submit">Logout</button>
+    </form>
+</header>
+
+<main>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+                <p>{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+    {% endwith %}
+
+    {% if user.role == 'student' %}
+    <section class="card">
+        <h2>Apply for Outpass / Home Leave</h2>
+        <form action="{{ url_for('apply') }}" method="POST">
+            <label>Request Type</label>
+            <select name="type" required>
+                <option value="Outpass">Outpass</option>
+                <option value="Home Leave">Home Leave</option>
+            </select>
+
+            <label>Destination</label>
+            <input name="dest" required>
+
+            <label>Reason</label>
+            <textarea name="reason" required></textarea>
+
+            <label>Leaving Date & Time</label>
+            <input type="datetime-local" name="from_dt" required>
+
+            <label>Returning Date & Time</label>
+            <input type="datetime-local" name="to_dt" required>
+
+            <button type="submit">Submit Request</button>
+        </form>
+    </section>
+    {% endif %}
+
+    {% if user.role == 'guard' %}
+    <section class="card">
+        <h2>Gate Verification</h2>
+        <form action="{{ url_for('gate') }}" method="POST">
+            <label>Six-character pass code</label>
+            <input name="code" maxlength="6" required>
+            <button type="submit">Verify / Check In / Check Out</button>
+        </form>
+    </section>
+    {% endif %}
+
+    {% if user.role == 'warden' %}
+    <section class="card">
+        <h2>Request Statistics</h2>
+        <div class="stats">
+            {% for status in ['Pending', 'Approved', 'Out', 'Returned', 'Rejected'] %}
+            <div class="stat">
+                <span>{{ status }}</span>
+                <strong>{{ requests|selectattr('status', 'equalto', status)|list|length }}</strong>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="card">
+        <h2>
+            {% if user.role == 'student' %}My Requests
+            {% elif user.role == 'guard' %}Students Outside
+            {% else %}All Student Requests{% endif %}
+        </h2>
+
+        {% set visible_requests = requests|selectattr('status', 'equalto', 'Out')|list
+            if user.role == 'guard' else requests %}
+
+        {% if visible_requests %}
+            {% for r in visible_requests %}
+            <article class="request">
+                {% if user.role != 'student' %}
+                    <h3>{{ r.name }} ({{ r.student_id }})</h3>
+                    <p>Room: {{ r.room }}</p>
+                {% endif %}
+
+                <h3>{{ r.type }} — {{ r.dest }}</h3>
+                <p><strong>Reason:</strong> {{ r.reason }}</p>
+                <p><strong>Leaving:</strong> {{ r.from_dt|replace('T', ' ') }}</p>
+                <p><strong>Return by:</strong> {{ r.to_dt|replace('T', ' ') }}</p>
+                <p><strong>Status:</strong> <span class="status">{{ r.status }}</span></p>
+
+                {% if r.remark %}
+                    <p><strong>Warden remark:</strong> {{ r.remark }}</p>
+                {% endif %}
+
+                {% if user.role == 'student' and r.status in ['Approved', 'Out'] %}
+                    <p><strong>Gate code:</strong> {{ r.code }}</p>
+                {% endif %}
+
+                {% if r.out_at %}
+                    <p><strong>Checked out:</strong> {{ r.out_at|replace('T', ' ') }}</p>
+                {% endif %}
+
+                {% if r.in_at %}
+                    <p><strong>Checked in:</strong> {{ r.in_at|replace('T', ' ') }}</p>
+                {% endif %}
+
+                {% if r.overdue %}
+                    <p class="warning">OVERDUE — return time has passed.</p>
+                {% endif %}
+
+                {% if user.role == 'warden' and r.status == 'Pending' %}
+                <form action="{{ url_for('decision', rid=r.id) }}" method="POST">
+                    <label>Remark (optional)</label>
+                    <input name="remark" maxlength="300">
+                    <div class="actions">
+                        <button name="action" value="Approved">Approve</button>
+                        <button class="danger" name="action" value="Rejected">Reject</button>
+                    </div>
+                </form>
+                {% endif %}
+            </article>
+            {% endfor %}
+        {% else %}
+            <p>No requests to display.</p>
+        {% endif %}
+    </section>
+</main>
+
+<footer>Smart Hostel Outpass & Home Leave System</footer>
+</body>
+</html>
