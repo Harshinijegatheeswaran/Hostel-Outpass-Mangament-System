@@ -1,0 +1,181 @@
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f1f5f9;
+    color: #243047;
+}
+
+header {
+    background: #183b67;
+    color: white;
+    text-align: center;
+    padding: 24px 15px;
+}
+
+header h1 {
+    margin-top: 0;
+}
+
+header p {
+    color: #dce9ff;
+}
+
+header form {
+    margin-top: 15px;
+}
+
+main {
+    width: 92%;
+    max-width: 1000px;
+    margin: 25px auto;
+}
+
+.auth-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.card {
+    background: white;
+    border-radius: 12px;
+    padding: 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 3px 15px #1e293b12;
+}
+
+h2 {
+    color: #183b67;
+    margin-top: 0;
+}
+
+label {
+    display: block;
+    font-weight: bold;
+    margin: 14px 0 6px;
+}
+
+input, select, textarea {
+    width: 100%;
+    padding: 11px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font: inherit;
+    background: white;
+}
+
+textarea {
+    min-height: 80px;
+}
+
+button {
+    border: 0;
+    border-radius: 6px;
+    background: #2463a6;
+    color: white;
+    padding: 11px 16px;
+    margin-top: 16px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #164778;
+}
+
+.secondary {
+    background: #526780;
+}
+
+.danger {
+    background: #bd3547;
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.request {
+    border: 1px solid #dbe3ef;
+    padding: 16px;
+    margin: 14px 0;
+    border-radius: 8px;
+    overflow-wrap: anywhere;
+}
+
+.request h3 {
+    color: #183b67;
+}
+
+.status {
+    display: inline-block;
+    padding: 5px 9px;
+    background: #e2e8f0;
+    border-radius: 5px;
+    font-weight: bold;
+}
+
+.warning {
+    color: #b42318;
+    font-weight: bold;
+}
+
+.messages {
+    max-width: 900px;
+    margin: 18px auto;
+    padding: 12px 20px;
+    background: #e0f2fe;
+    border-radius: 8px;
+    overflow-wrap: anywhere;
+}
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 12px;
+}
+
+.stat {
+    background: #edf4ff;
+    border-radius: 8px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stat strong {
+    font-size: 25px;
+    color: #2463a6;
+}
+
+.muted {
+    font-size: 13px;
+    color: #64748b;
+}
+
+footer {
+    text-align: center;
+    padding: 20px;
+    color: #64748b;
+}
+
+@media (max-width: 650px) {
+    .auth-grid {
+        grid-template-columns: 1fr;
+    }
+
+    main {
+        width: 94%;
+    }
+
+    .card {
+        padding: 16px;
+    }
+}
